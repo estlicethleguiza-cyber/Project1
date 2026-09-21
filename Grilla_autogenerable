@@ -1,0 +1,225 @@
+#include<iostream> // Incluye la librería estándar de entrada y salida de C++
+#include<glad/glad.h> // Incluye GLAD para gestionar los punteros de funciones de OpenGL
+#include<GLFW/glfw3.h> // Incluye GLFW para gestionar la creación de ventanas y eventos
+#include<vector> // Incluye el contenedor de vectores de C++ para almacenar los vértices dinámicamente
+
+// Variables globales para que el callback pueda modificar el VBO y la grilla
+GLuint VAO, VBO; // Identificadores para el Vertex Array Object y Vertex Buffer Object
+int totalVertices = 0; // Almacena el número total de vértices a dibujar
+
+// Función que regenera las coordenadas de los cuadrados y actualiza el VBO dinámicamente
+void RecreateGridForViewport(GLFWwindow* window)
+{
+	// Obtiene el tamaño actual de la ventana en píxeles
+	int width, height;
+	glfwGetFramebufferSize(window, &width, &height);
+
+	// Evita división por cero si la ventana se minimiza
+	if (height == 0) height = 1;
+
+	// Tamaño fijo deseado para cada cuadrado en píxeles
+	float tamPx = 80.0f;
+
+	// Calcula dinámicamente cuántas columnas y filas caben según las dimensiones de la ventana
+	int numCols = static_cast<int>(width / tamPx);
+	int numFilas = static_cast<int>(height / tamPx);
+
+	// Convierte el tamaño de píxeles al espacio de Coordenadas Normalizadas de Dispositivo (NDC: -1.0 a 1.0)
+	float tamNDC_X = (tamPx / static_cast<float>(width)) * 2.0f;
+	float tamNDC_Y = (tamPx / static_cast<float>(height)) * 2.0f;
+
+	// Vector dinámico para almacenar las coordenadas de los vértices
+	std::vector<GLfloat> vertices;
+
+	// Primer centro X en la esquina superior izquierda (-1.0 + medio ancho)
+	float centroX_inicial = -1.0f + (tamNDC_X / 2.0f);
+	// Primer centro Y en la esquina superior izquierda (1.0 - medio alto)
+	float centroY_inicial = 1.0f - (tamNDC_Y / 2.0f);
+
+	// Bucle para iterar por el número dinámico de filas
+	for (int fila = 0; fila < numFilas; fila++)
+	{
+		// Bucle para iterar por el número dinámico de columnas
+		for (int col = 0; col < numCols; col++)
+		{
+			// Calcula el centro X del cuadrado actual en NDC
+			float cx = centroX_inicial + (col * tamNDC_X);
+			// Calcula el centro Y del cuadrado actual en NDC
+			float cy = centroY_inicial - (fila * tamNDC_Y);
+
+			// Calcula la mitad del tamaño en X y en Y para definir los bordes
+			float medioTamX = tamNDC_X / 2.0f;
+			float medioTamY = tamNDC_Y / 2.0f;
+
+			// Primer triángulo del cuadrado actual (Abajo-Izquierda, Abajo-Derecha, Arriba-Derecha)
+			vertices.push_back(cx - medioTamX); vertices.push_back(cy - medioTamY); vertices.push_back(0.0f);
+			vertices.push_back(cx + medioTamX); vertices.push_back(cy - medioTamY); vertices.push_back(0.0f);
+			vertices.push_back(cx + medioTamX); vertices.push_back(cy + medioTamY); vertices.push_back(0.0f);
+
+			// Segundo triángulo del cuadrado actual (Arriba-Derecha, Arriba-Izquierda, Abajo-Izquierda)
+			vertices.push_back(cx + medioTamX); vertices.push_back(cy + medioTamY); vertices.push_back(0.0f);
+			vertices.push_back(cx - medioTamX); vertices.push_back(cy + medioTamY); vertices.push_back(0.0f);
+			vertices.push_back(cx - medioTamX); vertices.push_back(cy - medioTamY); vertices.push_back(0.0f);
+		}
+	}
+
+	// Guarda el número total de vértices generados dinámicamente
+	totalVertices = static_cast<int>(vertices.size() / 3);
+
+	// Vincula el VAO para aplicar las modificaciones
+	glBindVertexArray(VAO);
+	// Vincula el VBO
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	// Sobrescribe o carga los nuevos datos del vector de vértices en el VBO de la GPU
+	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(GLfloat), vertices.data(), GL_STATIC_DRAW);
+	// Desvincula el VBO y VAO
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+}
+
+// Callback de GLFW que se ejecuta automáticamente cuando cambia el tamaño del framebuffer/ventana
+static void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+	// Actualiza el viewport de OpenGL al nuevo ancho y alto del framebuffer
+	glViewport(0, 0, width, height);
+
+	// Recrea la geometría de la grilla para agregar/quitar filas y columnas según el nuevo tamaño
+	RecreateGridForViewport(window);
+}
+
+// Código fuente del Vertex Shader (procesa las posiciones de los vértices)
+const char* vertexShaderSource = "#version 330 core\n"
+"layout (location = 0) in vec3 aPos;\n"
+"void main()\n"
+"{\n"
+"   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
+"}\0";
+
+// Código fuente del Fragment Shader (asigna el color blanco a los objetos dibujados)
+const char* fragmentShaderSource = "#version 330 core\n"
+"out vec4 FragColor;\n"
+"void main()\n"
+"{\n"
+"   FragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n" // Color blanco en formato RGBA (1, 1, 1, 1)
+"}\n\0";
+
+int main()
+{
+	// Inicializa la librería GLFW
+	glfwInit();
+
+	// Configura la versión mayor de OpenGL que usaremos (3)
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	// Configura la versión menor de OpenGL que usaremos (3.3)
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	// Especifica que se utilizará el perfil CORE (sin funciones obsoletas)
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+	// Crea un objeto ventana de GLFW de 800x800 píxeles titulado "YoutubeOpenGL"
+	GLFWwindow* window = glfwCreateWindow(800, 800, "YoutubeOpenGL", NULL, NULL);
+
+	// Comprueba si la ventana no se pudo crear correctamente
+	if (window == NULL)
+	{
+		std::cout << "Failed to create GLFW window" << std::endl; // Imprime mensaje de error
+		glfwTerminate(); // Termina la ejecución de GLFW
+		return -1; // Sale del programa indicando fallo
+	}
+
+	// Establece el contexto de OpenGL de la ventana creada como el contexto actual
+	glfwMakeContextCurrent(window);
+
+	// Asigna la función de callback para redimensionamiento automático del framebuffer
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
+	// Carga las funciones de OpenGL utilizando GLAD
+	gladLoadGL();
+
+	// Especifica las dimensiones del Viewport de OpenGL dentro de la ventana (de 0,0 a 800,800)
+	glViewport(0, 0, 800, 800);
+
+	// Crea el objeto Vertex Shader y obtiene su identificador
+	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	// Asigna el código fuente al Vertex Shader
+	glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+	// Compila el Vertex Shader a código de máquina
+	glCompileShader(vertexShader);
+
+	// Crea el objeto Fragment Shader y obtiene su identificador
+	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	// Asigna el código fuente al Fragment Shader
+	glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+	// Compila el Fragment Shader a código de máquina
+	glCompileShader(fragmentShader);
+
+	// Crea el Programa de Shaders y obtiene su identificador
+	GLuint shaderProgram = glCreateProgram();
+	// Adjunta el Vertex Shader al Programa de Shaders
+	glAttachShader(shaderProgram, vertexShader);
+	// Adjunta el Fragment Shader al Programa de Shaders
+	glAttachShader(shaderProgram, fragmentShader);
+	// Enlaza todos los shaders juntos dentro del Programa
+	glLinkProgram(shaderProgram);
+
+	// Elimina los objetos Shader ya que han sido enlazados al programa y no se necesitan más
+	glDeleteShader(vertexShader);
+	glDeleteShader(fragmentShader);
+
+	// Genera 1 Vertex Array Object (VAO) y 1 Vertex Buffer Object (VBO)
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+
+	// Vincula el VAO para registrar las configuraciones de atributos
+	glBindVertexArray(VAO);
+	// Vincula el VBO indicando que almacenará un buffer de arreglos
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+	// Configura la estructura de los datos del vértice (Atributo 0, 3 componentes float, stride de 3 floats)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	// Habilita el atributo de vértice en el índice 0
+	glEnableVertexAttribArray(0);
+
+	// Desvincula el VBO y el VAO
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+
+	// Llama por primera vez a la función para construir la geometría de la grilla inicial
+	RecreateGridForViewport(window);
+
+	// Configura el modo de renderizado de polígonos a líneas para que solo se dibuje la grilla (líneas negras)
+	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+	// Bucle principal de renderizado (se ejecuta mientras la ventana permanezca abierta)
+	while (!glfwWindowShouldClose(window))
+	{
+		// Establece el color de fondo de la ventana a gris medio (RGB: 0.5, 0.5, 0.5)
+		glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+		// Limpia el buffer de color asignando el color de fondo especificado
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		// Activa el Programa de Shaders que configuramos
+		glUseProgram(shaderProgram);
+		// Vincula el VAO que contiene la geometría de la grilla
+		glBindVertexArray(VAO);
+		// Dibuja los cuadrados según la cantidad de vértices calculada en RecreateGridForViewport
+		glDrawArrays(GL_TRIANGLES, 0, totalVertices);
+
+		// Intercambia el buffer trasero con el delantero para mostrar la imagen renderizada
+		glfwSwapBuffers(window);
+		// Procesa los eventos de la ventana (movimientos de ratón, teclas, redimensionamiento, etc.)
+		glfwPollEvents();
+	}
+
+	// Libera los recursos del VAO, VBO y Shader Program creados en la GPU
+	glDeleteVertexArrays(1, &VAO);
+	glDeleteBuffers(1, &VBO);
+	glDeleteProgram(shaderProgram);
+
+	// Destruye la ventana creada por GLFW
+	glfwDestroyWindow(window);
+	// Termina la ejecución de GLFW y libera sus recursos
+	glfwTerminate();
+
+	// Retorna 0 indicando que el programa finalizó con éxito
+	return 0;
+}
