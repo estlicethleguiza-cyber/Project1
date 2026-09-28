@@ -1,0 +1,382 @@
+#include<iostream> // Incluye la librería estándar de entrada y salida de C++
+#include<glad/glad.h> // Incluye GLAD para gestionar los punteros de funciones de OpenGL
+#include<GLFW/glfw3.h> // Incluye GLFW para gestionar la creación de ventanas y eventos
+#include<vector> // Incluye el contenedor de vectores de C++ para almacenar los vértices dinámicamente
+#include<cmath> // Incluye cmath para operaciones matemáticas (std::round, std::sqrt, std::pow)
+
+// Variables globales para que el callback y las funciones puedan modificar la grilla
+GLuint VAO, VBO, EBO; // Identificadores para el Vertex Array Object, Vertex Buffer Object y Element Buffer Object
+int totalVertices = 0; // Almacena el número total de vértices a dibujar
+int totalIndices = 0; // Almacena el número total de índices a dibujar
+
+// Coordenadas en espacio NDC
+float x1_input = -1.0f, y1_input = -1.0f;
+float x2_input = -1.0f, y2_input = -1.0f;
+
+// Estado de clic del ratón 1: primer clic hecho coordenadas x1 y1 , 2: ambos hechos coordenadas x2 y2
+int estadoClic = 0;
+
+// Estructura de datos para vértice con posición (X, Y, Z) y color
+struct Vertex {
+    float x, y, z;
+    float cellIndex; // Permite al Fragment Shader identificar a qué cuadrado pertenece este vértice
+};
+
+// Normal Device Coordinates (NDC)
+float NDC_ancho = 2.0f;
+float NDC_alto = 2.0f;
+
+// Función para marcar una celda en la matriz respetando los límites de la grilla (Simetría)
+void pintarCelda(int x, int y, int filas, int columnas, std::vector<std::vector<bool>>& matriz)
+{
+    if (x >= 0 && x < columnas && y >= 0 && y < filas)
+    {
+        matriz[y][x] = true;
+    }
+}
+
+// Función auxiliar para aplicar la simetría de 8 octantes (Simetría Axial respecto a ejes y diagonales)
+void simetria8Octantes(int xc, int yc, int x, int y, int filas, int columnas, std::vector<std::vector<bool>>& matriz)
+{
+    // Octantes en sentido horario / reflexión axial respecto a (xc, yc)
+    pintarCelda(xc + x, yc + y, filas, columnas, matriz); // Octante 1
+    pintarCelda(xc - x, yc + y, filas, columnas, matriz); // Octante 4
+    pintarCelda(xc + x, yc - y, filas, columnas, matriz); // Octante 8
+    pintarCelda(xc - x, yc - y, filas, columnas, matriz); // Octante 5
+    pintarCelda(xc + y, yc + x, filas, columnas, matriz); // Octante 2
+    pintarCelda(xc - y, yc + x, filas, columnas, matriz); // Octante 3
+    pintarCelda(xc + y, yc - x, filas, columnas, matriz); // Octante 7
+    pintarCelda(xc - y, yc - x, filas, columnas, matriz); // Octante 6
+}
+
+// Función para crear la grilla 
+void RecreateGridForViewport(GLFWwindow* window)
+{
+    int columna = 50;
+    int filas = 50;
+
+    // Tamaño de cada celda en la grilla calculada con static_cast<float>
+    float tamNDC_X = NDC_ancho / static_cast<float>(columna);
+    float tamNDC_Y = NDC_alto / static_cast<float>(filas);
+
+    // Inicio de la cuadrícula en X y Y (-1, 1), desde la esquina superior izquierda
+    float inicio_x = -1.0f;
+    float inicio_y = 1.0f;
+
+    // Primer centro X e Y considerando el offset inicial desde arriba a la izquierda
+    float centroX_inicial = inicio_x + (tamNDC_X / 2.0f);
+    float centroY_inicial = inicio_y - (tamNDC_Y / 2.0f);
+
+    // Convertir coordenadas de clics en índices de la grilla (col, fila)
+    int celda1_col = static_cast<int>((x1_input - inicio_x) / tamNDC_X);
+    int celda1_fil = static_cast<int>((inicio_y - y1_input) / tamNDC_Y);
+
+    int celda2_col = static_cast<int>((x2_input - inicio_x) / tamNDC_X);
+    int celda2_fil = static_cast<int>((inicio_y - y2_input) / tamNDC_Y);
+
+    // Matriz de marcas para saber qué celdas pintar con el algoritmo de Bresenham para círculos
+    std::vector<std::vector<bool>> esAzulMatriz(filas, std::vector<bool>(columna, false));
+
+    // Si se hizo el primer clic, se marca el centro de la circunferencia
+    if (estadoClic >= 1 && celda1_col >= 0 && celda1_col < columna && celda1_fil >= 0 && celda1_fil < filas)
+    {
+        esAzulMatriz[celda1_fil][celda1_col] = true;
+    }
+
+    // Si se hicieron ambos clics, se ejecuta el Algoritmo del Punto Medio para Círculos
+    if (estadoClic == 2 && celda1_col >= 0 && celda1_col < columna && celda1_fil >= 0 && celda1_fil < filas &&
+        celda2_col >= 0 && celda2_col < columna && celda2_fil >= 0 && celda2_fil < filas)
+    {
+        // 1. Definir el centro del círculo (primer clic)
+        int xc = celda1_col;
+        int yc = celda1_fil;
+
+        // 2. Calcular el radio r (distancia euclidiana en celdas desde el centro hasta el 2do clic)
+        int dx = celda2_col - celda1_col;
+        int dy = celda2_fil - celda1_fil;
+        int r = static_cast<int>(std::round(std::sqrt(dx * dx + dy * dy)));
+
+        // 3. Algoritmo del Punto Medio (Bresenham para Círculos)
+        int x = 0;
+        int y = r;
+        int p = 1 - r; // Parámetro de decisión inicial: P_0 = 5/4 - r (en enteros es 1 - r)
+
+        // Dibujar los primeros 8 puntos usando simetría axial
+        simetria8Octantes(xc, yc, x, y, filas, columna, esAzulMatriz);
+
+        // Iterar en el primer octante (mientras x < y)
+        while (x < y)
+        {
+            x++;
+            if (p < 0)
+            {
+                // El punto medio está dentro del círculo -> Seleccionar pixel E (East)
+                p += 2 * x + 1;
+            }
+            else
+            {
+                // El punto medio está fuera o sobre el límite -> Seleccionar pixel SE (South-East)
+                y--;
+                p += 2 * (x - y) + 1;
+            }
+
+            // Reflejar el nuevo punto en los 8 octantes mediante simetría axial
+            simetria8Octantes(xc, yc, x, y, filas, columna, esAzulMatriz);
+        }
+    }
+
+    // Vector dinámico para almacenar los vértices con su identificador de color
+    std::vector<Vertex> vertices;
+
+    // Vector para almacenar los índices que utilizará el EBO
+    std::vector<GLuint> indices;
+
+    // Bucle para iterar filas de arriba a abajo
+    for (int fila = 0; fila < filas; fila++)
+    {
+        // Bucle para iterar columnas de izquierda a derecha
+        for (int col = 0; col < columna; col++)
+        {
+            // Centros de las celdas de la siguiente fila y columna empezando en superior izquierda
+            float cx = centroX_inicial + (col * tamNDC_X);
+            float cy = centroY_inicial - (fila * tamNDC_Y);
+
+            // Calcula la mitad del tamaño en X y Y para definir los bordes del cuadrado
+            float medioTamX = tamNDC_X / 2.0f;
+            float medioTamY = tamNDC_Y / 2.0f;
+
+            // Determina el color del cuadrado
+            float colorcambio = esAzulMatriz[fila][col] ? 1.0f : 0.0f; // 0.0f = blanco, 1.0f = azul
+
+            // Define los 4 vértices del cuadrado actual asignándoles la propiedad colorcambio
+            Vertex v0 = { cx + medioTamX, cy + medioTamY, 0.0f, colorcambio };
+            Vertex v1 = { cx + medioTamX, cy - medioTamY, 0.0f, colorcambio };
+            Vertex v2 = { cx - medioTamX, cy - medioTamY, 0.0f, colorcambio };
+            Vertex v3 = { cx - medioTamX, cy + medioTamY, 0.0f, colorcambio };
+
+            // Guarda los 4 vértices del cuadrado
+            GLuint inicio = static_cast<GLuint>(vertices.size());
+
+            vertices.push_back(v0); // v3 *         * v0
+            vertices.push_back(v1); //    
+            vertices.push_back(v2); // v2 *         * v1
+            vertices.push_back(v3); //
+
+            // Índices de triángulo que forman el cuadrado
+            indices.push_back(inicio + 0);
+            indices.push_back(inicio + 1);
+            indices.push_back(inicio + 2);
+
+            indices.push_back(inicio + 0);
+            indices.push_back(inicio + 2);
+            indices.push_back(inicio + 3);
+        }
+    }
+
+    // Guarda el número total de vértices generados
+    totalVertices = static_cast<int>(vertices.size());
+
+    // Guarda el número total de índices generados
+    totalIndices = static_cast<int>(indices.size());
+
+    // Vincula el VAO y el VBO para cargar los nuevos datos a la GPU
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+
+    // Vincula el EBO y carga los índices a la GPU
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+
+    // Configuración del atributo 0: Posición (x, y, z)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, x));
+    glEnableVertexAttribArray(0);
+
+    // Configuración del atributo 1: Indicador de color (esAzul)
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, cellIndex));
+    glEnableVertexAttribArray(1);
+
+    // Desvincula el VBO y VAO
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+}
+
+// Callback para capturar los clics del ratón en la ventana de GLFW
+static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
+{
+    // Verifica que se haya presionado el botón izquierdo del mouse
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
+    {
+        double xpos, ypos; // Variables que almacenan la posición del mouse
+        glfwGetCursorPos(window, &xpos, &ypos);
+
+        int NDC_ancho, NDC_alto;
+        glfwGetWindowSize(window, &NDC_ancho, &NDC_alto); // Guarda la coordenada
+
+        // Convertir las coordenadas de pantalla de píxeles a NDC (-1.0 a 1.0)
+        float x_ndc = (2.0f * static_cast<float>(xpos)) / static_cast<float>(NDC_ancho) - 1.0f;
+        float y_ndc = 1.0f - (2.0f * static_cast<float>(ypos)) / static_cast<float>(NDC_alto);
+
+        if (estadoClic == 0 || estadoClic == 2)
+        {
+            // Registrar centro del círculo x1, y1 (Primer Clic)
+            x1_input = x_ndc;
+            y1_input = y_ndc;
+            estadoClic = 1;
+            std::cout << "Centro capturado (NDC): (" << x1_input << ", " << y1_input << ")\n";
+        }
+        else if (estadoClic == 1)
+        {
+            // Registrar punto de radio x2, y2 (Segundo Clic)
+            x2_input = x_ndc;
+            y2_input = y_ndc;
+            estadoClic = 2;
+            std::cout << "Punto de radio capturado (NDC): (" << x2_input << ", " << y2_input << ")\n";
+        }
+
+        // Reconstruir la grilla con los nuevos datos de entrada
+        RecreateGridForViewport(window);
+    }
+}
+
+// Callback de GLFW Redimensiona la ventana
+static void framebuffer_size_callback(GLFWwindow* window, int ancho, int alto)
+{
+    // Actualiza el viewport de OpenGL
+    glViewport(0, 0, ancho, alto);
+    // Recrea la geometría calculando los centros de celdas según las nuevas dimensiones
+    RecreateGridForViewport(window);
+}
+
+// Código fuente del Vertex Shader
+const char* vertexShaderSource = "#version 330 core\n"
+"layout (location = 0) in vec3 aPos;\n"
+"layout (location = 1) in float aEsAzul;\n"
+"out float esAzul;\n"
+"void main()\n"
+"{\n"
+"   gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0);\n"
+"   esAzul = aEsAzul;\n"
+"}\0";
+
+// Código fuente del Fragment Shader
+const char* fragmentShaderSource = "#version 330 core\n"
+"out vec4 FragColor;\n"
+"in float esAzul;\n"
+"uniform int drawMode;\n" // 0: Modo Relleno (Blanco/Azul), 1: Modo Línea (Negro)
+"void main()\n"
+"{\n"
+"   if (drawMode == 1)\n"
+"   {\n"
+"       FragColor = vec4(0.0f, 0.0f, 0.0f, 1.0f);\n" // Líneas de la grilla en negro
+"   }\n"
+"   else\n"
+"   {\n"
+"       if (esAzul > 0.5f)\n"
+"           FragColor = vec4(0.0f, 0.4f, 1.0f, 1.0f);\n" // Cuadrados de la circunferencia en azul
+"       else\n"
+"           FragColor = vec4(1.0f, 1.0f, 1.0f, 1.0f);\n" // Demás cuadrados en blanco
+"   }\n"
+"}\n\0";
+
+int main()
+{
+    std::cout << "        Algoritmo Punto Medio (Circunferencia - 8 Octantes)\n\n";
+
+    // Inicializa GLFW
+    glfwInit();
+
+    // Configura la versión de OpenGL 3.3 Core Profile
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    // Crea una ventana de 800x800 píxeles
+    GLFWwindow* window = glfwCreateWindow(800, 800, "Grilla - Circulo", NULL, NULL);
+    if (window == NULL)
+    {
+        std::cout << "fallo al crear window de GLFW" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+
+    // Establece el contexto actual de OpenGL
+    glfwMakeContextCurrent(window);
+
+    // Asigna el callback de redimensionamiento de ventana y clic del ratón
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+
+    // Carga GLAD
+    gladLoadGL();
+
+    // Configura el viewport inicial
+    glViewport(0, 0, 800, 800);
+
+    // Compilación del Vertex Shader
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+
+    // Compilación del Fragment Shader
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+    // Creación y enlazado del Shader Program
+    GLuint shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    // Eliminación de shaders individuales ya enlazados
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    // Generación de buffers VAO, VBO y EBO
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+
+    // Construye la grilla inicial
+    RecreateGridForViewport(window);
+
+    // Obtiene la ubicación del uniform 'drawMode' en el Fragment Shader
+    GLint drawModeLoc = glGetUniformLocation(shaderProgram, "drawMode");
+
+    // Bucle principal de renderizado
+    while (!glfwWindowShouldClose(window))
+    {
+        // Color de fondo en gris (RGB: 0.5, 0.5, 0.5)
+        glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Activa el Shader Program y vincula el VAO
+        glUseProgram(shaderProgram);
+        glBindVertexArray(VAO);
+
+        // Rellenar los cuadrados Blanco o Azul
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        glUniform1i(drawModeLoc, 0); // Establece drawMode = 0 (colores de relleno)
+        glDrawElements(GL_TRIANGLES, totalIndices, GL_UNSIGNED_INT, 0);
+
+        // Líneas Negras
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        glUniform1i(drawModeLoc, 1); // Establece drawMode = 1 (líneas negras)
+        glDrawElements(GL_TRIANGLES, totalIndices, GL_UNSIGNED_INT, 0);
+
+        // Intercambia buffers y consulta eventos
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    // Liberación de recursos
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+    glDeleteProgram(shaderProgram);
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return 0;
+}
