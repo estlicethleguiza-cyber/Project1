@@ -36,7 +36,7 @@ void pintarCelda(int x, int y, int filas, int columnas, std::vector<std::vector<
 }
 
 // Función auxiliar para aplicar la simetría de 8 octantes (Simetría Axial respecto a ejes y diagonales)
-void simetria8Octantes(int xc, int yc, int x, int y, int filas, int columnas, std::vector<std::vector<bool>>& matriz)
+void  simetriaOctan(int xc, int yc, int x, int y, int filas, int columnas, std::vector<std::vector<bool>>& matriz)
 {
     // Octantes en sentido horario / reflexión axial respecto a (xc, yc)
     pintarCelda(xc + x, yc + y, filas, columnas, matriz); // Octante 1
@@ -94,34 +94,35 @@ void RecreateGridForViewport(GLFWwindow* window)
         // 2. Calcular el radio r (distancia euclidiana en celdas desde el centro hasta el 2do clic)
         int dx = celda2_col - celda1_col;
         int dy = celda2_fil - celda1_fil;
-        int r = static_cast<int>(std::round(std::sqrt(dx * dx + dy * dy)));
+        int r = static_cast<int>(std::round(std::sqrt(dx * dx + dy * dy)));// si use pitagoras porque es necesario para calcular distancia r
 
-        // 3. Algoritmo del Punto Medio (Bresenham para Círculos)
+        //-------------------------- Bresenham para Círculos
+        //--------------------------Algoritmo del Punto Medio
         int x = 0;
         int y = r;
-        int p = 1 - r; // Parámetro de decisión inicial: P_0 = 5/4 - r (en enteros es 1 - r)
+        int p = 1 - r; // Parámetro de decisión inicial: en enteros es 1 - r
 
         // Dibujar los primeros 8 puntos usando simetría axial
-        simetria8Octantes(xc, yc, x, y, filas, columna, esAzulMatriz);
+        simetriaOctan(xc, yc, x, y, filas, columna, esAzulMatriz);
 
         // Iterar en el primer octante (mientras x < y)
+        //Celdas desde el eje vertical x =0 hasta la diagonal ángulo de 45°
         while (x < y)
         {
             x++;
-            if (p < 0)
-            {
-                // El punto medio está dentro del círculo -> Seleccionar pixel E (East)
-                p += 2 * x + 1;
+            if (p < 0)  //el punto medio entre los dos píxeles candidatos está dentro del círculo 
+            {            //se mantiene igual No desciende
+                p += 2 * x + 1;  //Se actualiza el parámetro de decisión para la siguiente iteración
             }
             else
             {
-                // El punto medio está fuera o sobre el límite -> Seleccionar pixel SE (South-East)
+                     //bajar un renglón en la grilla.
                 y--;
                 p += 2 * (x - y) + 1;
             }
 
             // Reflejar el nuevo punto en los 8 octantes mediante simetría axial
-            simetria8Octantes(xc, yc, x, y, filas, columna, esAzulMatriz);
+            simetriaOctan(xc, yc, x, y, filas, columna, esAzulMatriz);
         }
     }
 
