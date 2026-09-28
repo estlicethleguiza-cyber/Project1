@@ -44,7 +44,8 @@ void RecreateGridForViewport(GLFWwindow* window)
     float centroX_inicial = inicio_x + (tamNDC_X / 2.0f);
     float centroY_inicial = inicio_y - (tamNDC_Y / 2.0f);
 
-    // Convertir coordenadas de clics en índices de la grilla (col, fila)
+    // Convertir coordenadas de clics a entero
+    //se convierten esas coordenadas flotantes eníndices enteros de columna y fila mediante un casteo explícito
     int celda1_col = static_cast<int>((x1_input - inicio_x) / tamNDC_X);
     int celda1_fil = static_cast<int>((inicio_y - y1_input) / tamNDC_Y);
 
